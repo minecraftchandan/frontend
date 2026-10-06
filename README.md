@@ -1,119 +1,113 @@
-# Satark Drishti API + PostgreSQL (Render)
+# Satark Drishti local frontend + camera
 
-This is a self-contained deployment copy of the FastAPI backend. It connects to
-any hosted PostgreSQL provider (such as Neon) through `DATABASE_URL`, initializes
-the schema and fictional demo records on startup, and stores uploaded inspection
-evidence in PostgreSQL `BYTEA` columns. The original `backend/` folder remains
-unchanged and continues to use SQLite for local development.
+This folder is a standalone copy of the integrated Authority and Inspector
+frontends, their separately maintained Inspector UI source, and the local
+MediaMTX configuration. It runs the frontends and camera service on your
+laptop while API data is served by the deployed Render backend and its
+configured PostgreSQL database.
 
-## Create a hosted PostgreSQL database
+The frontend does **not** connect directly to PostgreSQL. Keep the Neon
+`DATABASE_URL` only in the backend's Render environment settings.
 
-1. Create a PostgreSQL project with Neon (or another hosted PostgreSQL provider).
-2. Copy its connection string. For Neon, use the pooled connection string for a
-   web service and retain the provider's SSL parameters.
-3. Keep the connection string private; it contains database credentials.
+## Requirements
 
-## Deploy the API to Render
+- Windows, Node.js 22.12 or newer, and npm.
+- The MediaMTX v1.21.1 Windows executable installed at
+  `%LOCALAPPDATA%\SatarkDrishti\MediaMTX-v1.21.1\mediamtx.exe`, or set
+  `MEDIA_MTX_PATH` to its full path.
+- Larix Broadcaster on a phone connected to the same trusted Wi-Fi as the
+  laptop.
 
-1. Push this repository to GitHub and create the Neon database as described above.
-2. In Render, choose **New > Blueprint** and connect the new repository
-   containing these files at its root.
-3. Select `render.yaml` as the Blueprint file. It provisions only the Python
-   API web service; the API sources, dependencies, and Blueprint are all at
-   the repository root.
-4. When prompted for environment values, set:
-   - `DATABASE_URL`: the PostgreSQL connection string copied from Neon.
-   - `TRUSTED_HOSTS`: the API's exact Render hostname, such as
-     `satark-drishti-api.onrender.com` (without `https://`).
-   - `ALLOWED_ORIGINS`: the exact origin of the deployed frontend, including
-     `https://` and no trailing slash, for example `https://example.onrender.com`.
-     If multiple frontends call the API, comma-separate their origins.
-5. Wait for the service health check at `/api/health` to pass. The API's
-   generated `API_ACCESS_TOKEN` is in the service's Environment settings. Keep
-   it secret; trusted server-side clients must include it in the Authorization
-   header when calling protected endpoints.
+## Connect to the Render API
 
-Render uses the repository root and `requirements.txt` to install dependencies,
-then starts Uvicorn on Render's assigned `$PORT`.
-
-## Local PostgreSQL run
-
-Create a PostgreSQL database, copy `.env.example` to `.env`, and set
-`DATABASE_URL` to its connection URL. Install and run from this folder:
+From this folder, install dependencies and create a private local environment
+file:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+npm install
+Copy-Item .env.example .env.local
 ```
 
-The database schema is created on the first startup. Local demo accounts and
-fictional sample data are seeded automatically. The first registered records
-and inspection evidence uploaded after deployment are persisted in PostgreSQL.
+Edit `.env.local`. Set `API_ACCESS_TOKEN` to the Render service's
+`API_ACCESS_TOKEN` value in the Render dashboard. Keep this value private;
+`.env.local` is ignored by Git. `API_PROXY_TARGET` is set to the deployed API
+URL by default and can be changed if your Render service has a different URL.
+Do not add `DATABASE_URL` here.
 
-## Import the local SQLite snapshot
+The development server listens only on `127.0.0.1`. It adds the API bearer
+token on the server side when proxying `/api` requests to Render; the token is
+not included in the browser bundle. This is a **local development bridge**,
+not production authentication. Do not expose the development server to your
+LAN or deploy it. A future public/mobile client needs individual user
+authentication rather than this shared development token.
 
-The repository includes a generator that reads `backend/data/satark.sqlite3`
-and writes `backend&db/local-import.sql`:
+## Run the frontend and camera together
 
 ```powershell
-python backend&db/scripts/export_sqlite_to_postgres.py
+npm run start:local
 ```
 
-Run the importer from the repository root. It prompts for the Neon connection
-URL with hidden input, creates/initializes the backend tables and demo seed in
-Neon, then imports the SQLite snapshot:
+Open `http://127.0.0.1:5173`. The development server requires a valid API token;
+if it is missing or too short, it will stop with an explicit configuration
+error. Press **Ctrl+C** to stop both services.
+
+If the online database has not yet received your SQLite import, the frontend
+will show only the data currently present in the deployed backend. A healthy
+API status alone does not confirm that the import completed.
+
+## Publish the phone camera over same Wi-Fi
+
+Find the laptop's Wi-Fi IPv4 address with `ipconfig`. In Larix, set the RTMP
+server/application to `rtmp://<LAPTOP-LAN-IP>:1935/live` and stream name/key
+to `entrance`. The full URL is
+`rtmp://<LAPTOP-LAN-IP>:1935/live/entrance`.
+The Live Monitoring page also displays this publishing URL and explains where
+to find the laptop's IP address.
+
+Keep the phone and laptop on the same trusted Wi-Fi. Allow MediaMTX through
+Windows Firewall on **Private networks only** if prompted. Live Monitoring in
+the laptop's browser uses the local
+`http://localhost:8889/live/entrance/whep` endpoint. This local demo stream has
+no publisher authentication: do not port-forward the camera ports or use
+private footage.
+
+## Build the Android APK
+
+The Android app packages the same React routes and UI in a Capacitor WebView.
+Install Android Studio with Android SDK Platform 35 and a JDK, then from this
+folder run:
 
 ```powershell
-python "backend&db/scripts/import_sqlite_export_to_postgres.py"
+npm install
+npm run android:apk
 ```
 
-It validates the generated file and imports transactionally. The SQL uses
-upserts for matching primary keys and removes inspections recorded as deleted
-in the SQLite tombstone table. You do not need to deploy the Render API first.
-Run it only against the intended project database; it imports personal/project
-records over matching seeded rows.
+The native Android project is already included in `android/`; run `npx cap add
+android` only if you intentionally remove and need to regenerate that folder.
+The debug APK is written to
+`android/app/build/outputs/apk/debug/app-debug.apk`. Install it with Android
+Studio or `adb install -r android/app/build/outputs/apk/debug/app-debug.apk`.
+Set `VITE_ANDROID_API_BASE_URL` in `.env.android` if the API has a different
+public URL; the checked-in `.env.android.example` shows the default. This
+Android-specific variable keeps
+the development proxy URL from `.env.local` out of the APK. Never place
+`API_ACCESS_TOKEN` or database credentials in this file or inside the APK.
 
-The SQL dump is ignored by Git because it contains account password hashes and
-embedded evidence images. Do not publish or share it. Regenerate it after any
-local SQLite changes that need to be included.
+The APK calls the backend directly. Sign-in returns a user-specific bearer
+token that expires after 12 hours; the shared API token is never embedded in
+the app. Before distributing an updated app, deploy the matching backend
+version and add `https://localhost` to the backend's `ALLOWED_ORIGINS` in
+Render. Protected backend operations then use the signed-in user's token. The
+camera WHEP endpoint should be configured in Live Monitoring as
+`http://<LAPTOP-LAN-IP>:8889/live/entrance/whep`; Android's `localhost` refers
+to the phone, not the laptop.
 
-## Import the root MySQL SQL samples into PostgreSQL
+## Included project contents
 
-The repository also has `Inspection_System1.sql`, `Sample_Input.sql`, and
-`Sample_Output.sql` in its root. Those scripts are MySQL-flavored; `Sample_Output`
-contains only SELECT statements, while `Sample_Input.sql` seeds one NGO, inspector,
-inspection, and evidence record. Import that sample as PostgreSQL with:
-
-```powershell
-python backend&db/scripts/import_root_sql_to_postgres.py
-```
-
-The script asks for the PostgreSQL URL with hidden input, or reads
-`ROOT_SQL_DATABASE_URL` if set. It creates the PostGIS-backed
-`inspection_system` schema and imports the sample there idempotently. This is
-separate from the FastAPI backend's public `public` schema. Do not enter a
-connection URL into chat, commit it, or target a database unless you intend to
-create this schema and sample data there.
-
-## Important limitations and deployment notes
-
-- Neon Free is suitable for demos and has usage/storage limits and scale-to-zero;
-  check the provider's current plan limits before relying on it.
-- Render Free web services spin down when idle.
-- The existing local SQLite database is intentionally not copied or imported.
-  Its organizations, schedules, inspection records, and uploaded images stay
-  on the development machine. This deployment starts from the included demo
-  seed; arrange a deliberate migration if local data must be retained.
-- Store `DATABASE_URL` and `API_ACCESS_TOKEN` only in Render's environment
-  settings. Do not commit `.env` files or place the token in frontend source.
-- The existing Authority and Inspector browser apps do not currently attach
-  `API_ACCESS_TOKEN` to API requests. Do not expose this shared API token in a
-  public browser bundle. Before connecting a public frontend, implement
-  per-user API authentication (or a trusted server-side proxy) in a separate
-  integration change.
-- CORS and trusted-host values must be restricted to the actual deployed
-  domains. Do not use `*`.
-- This API deployment does not host MediaMTX. Live RTMP/WebRTC monitoring needs
-  a separate streaming host with the required TCP/UDP ports and network rules.
+- `src/`, `inspector-portal/src/`, `public/`, and `Assets/`: integrated
+  Authority and Inspector app.
+- `camera/mediamtx.yml`: local RTMP ingest, WHEP signaling, and WebRTC media
+  configuration.
+- `scripts/start-local.mjs`: starts Vite and MediaMTX together without starting
+  another local API or database.
+- `android/`: Capacitor Android project created by `npx cap add android`.
